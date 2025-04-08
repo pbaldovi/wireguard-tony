@@ -1,7 +1,9 @@
-from flask import Flask, render_template, request, send_file
+from flask import Flask, render_template, request, send_file, url_for
 from wireguard_tools import WireguardKey
 import qrcode
-import io, base64
+import io
+import base64
+import ipaddress
 
 app = Flask(__name__)
 
@@ -10,26 +12,33 @@ def generate_keys():
     public_key = private_key.public_key()
     return str(private_key), str(public_key)
 
+def ip_add(ip, offset):
+    return str(ipaddress.IPv4Address(ipaddress.IPv4Address(ip) + offset))
+
 @app.route('/', methods=['GET', 'POST'])
 def index():
-    result = None
+    results = []
     qr_img = None
     server_config = None
-    download_conf = None
 
     if request.method == 'POST':
-        mode = request.form['mode']
-        endpoint = request.form['endpoint']
-        port = request.form['port']
-        allowed_ips = request.form['allowed_ips']
-        iface_name = request.form.get('iface_name', 'wireguard')
-        client_name = request.form.get('client_name', 'Cliente')
-        
-        if mode == 'new_server':
-            server_private, server_public = generate_keys()
-            interface_ip = request.form['interface_ip']
+        try:
+            mode = request.form['mode']
+            endpoint = request.form['endpoint']
+            port = request.form['port']
+            allowed_ips = request.form['allowed_ips']
+            iface_name = request.form.get('iface_name', 'wireguard')
+            client_name = request.form.get('client_name', 'Cliente')
+            client_ip = request.form.get('client_ip', '').strip()
+            is_multi = request.form.get('multiple') == 'on'
 
-            server_config = f"""/interface wireguard
+            if not client_ip:
+                return render_template('index.html', error="La IP del cliente es obligatoria.")
+
+            if mode == 'new_server':
+                server_private, server_public = generate_keys()
+                interface_ip = request.form.get('interface_ip', '').strip()
+                server_config = f"""/interface wireguard
 add listen-port={port} name={iface_name} private-key="{server_private}"
 
 /ip address
@@ -38,14 +47,44 @@ add address={interface_ip}/24 interface={iface_name}
 /ip firewall filter
 add chain=input protocol=udp dst-port={port} action=accept comment="Allow WireGuard"
 """
-        else:
-            server_public = request.form['server_public']
+            else:
+                server_public = request.form.get('server_public', '').strip()
 
-        client_ip = request.form['client_ip']
-        client_private, client_public = generate_keys()
+            if is_multi:
+                count = int(request.form['count'])
+                for i in range(count):
+                    ip = ip_add(client_ip, i)
+                    priv, pub = generate_keys()
+                    conf = f"""[Interface]
+PrivateKey = {priv}
+Address = {ip}/32
+DNS = 1.1.1.1
 
-        client_config = f"""[Interface]
-PrivateKey = {client_private}
+[Peer]
+PublicKey = {server_public}
+AllowedIPs = {allowed_ips}
+Endpoint = {endpoint}:{port}
+PersistentKeepalive = 25
+"""
+                    mikrotik_cmd = f"""/interface wireguard peers
+add allowed-address={ip}/32 interface={iface_name} public-key="{pub}" comment="{client_name}-{i+1}"
+"""
+                    qr = qrcode.make(conf)
+                    buf = io.BytesIO()
+                    qr.save(buf, format="PNG")
+                    qr_b64 = base64.b64encode(buf.getvalue()).decode()
+
+                    results.append({
+                        'client_name': f"{client_name}-{i+1}",
+                        'client_config': conf,
+                        'mikrotik_peer_cmd': mikrotik_cmd,
+                        'qr_img': qr_b64
+                    })
+
+            else:
+                priv, pub = generate_keys()
+                conf = f"""[Interface]
+PrivateKey = {priv}
 Address = {client_ip}/32
 DNS = 1.1.1.1
 
@@ -55,27 +94,25 @@ AllowedIPs = {allowed_ips}
 Endpoint = {endpoint}:{port}
 PersistentKeepalive = 25
 """
-
-        mikrotik_peer_cmd = f"""/interface wireguard peers
-add allowed-address={client_ip}/32 interface={iface_name} public-key="{client_public}" comment="{client_name}"
+                mikrotik_cmd = f"""/interface wireguard peers
+add allowed-address={client_ip}/32 interface={iface_name} public-key="{pub}" comment="{client_name}"
 """
+                qr = qrcode.make(conf)
+                buf = io.BytesIO()
+                qr.save(buf, format="PNG")
+                qr_b64 = base64.b64encode(buf.getvalue()).decode()
 
-        qr = qrcode.make(client_config)
-        buffer = io.BytesIO()
-        qr.save(buffer, format="PNG")
-        qr_img = base64.b64encode(buffer.getvalue()).decode()
+                results.append({
+                    'client_name': client_name,
+                    'client_config': conf,
+                    'mikrotik_peer_cmd': mikrotik_cmd,
+                    'qr_img': qr_b64
+                })
 
-        result = {
-            'client_config': client_config,
-            'mikrotik_peer_cmd': mikrotik_peer_cmd
-        }
+        except Exception as e:
+            return render_template('index.html', error=str(e))
 
-        # para descarga directa del conf
-        download_conf = io.BytesIO(client_config.encode())
-        download_conf.name = f"{client_name}.conf"
-        download_conf.seek(0)
-
-    return render_template('index.html', result=result, qr_img=qr_img, server_config=server_config, download_conf=download_conf)
+    return render_template('index.html', result=results, server_config=server_config)
 
 @app.route('/download_conf')
 def download_conf():
