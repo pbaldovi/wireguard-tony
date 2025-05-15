@@ -118,7 +118,7 @@ add allowed-address={client_ip}/32 interface={iface_name} public-key="{pub}" com
 def download_conf():
     client_name = request.args.get('name', 'cliente')
     conf_data = request.args.get('data', '')
-    return send_file(io.BytesIO(conf_data.encode()), download_name=f"{client_name}.conf", as_attachment=True)
+    return send_file(io.BytesIO(conf_data.encode()), download_name=f"{client_name.replace(" ", "")}.conf", as_attachment=True)
 
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=8080)
