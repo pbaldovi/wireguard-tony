@@ -67,7 +67,7 @@ Endpoint = {endpoint}:{port}
 PersistentKeepalive = 25
 """
                     mikrotik_cmd = f"""/interface wireguard peers
-add allowed-address={ip}/32 interface={iface_name} public-key="{pub}" comment="{client_name}-{i+1}" respond=no
+add allowed-address={ip}/32 interface={iface_name} public-key="{pub}" comment="{client_name}-{i+1}" responder=yes
 """
                     qr = qrcode.make(conf)
                     buf = io.BytesIO()
@@ -95,7 +95,7 @@ Endpoint = {endpoint}:{port}
 PersistentKeepalive = 25
 """
                 mikrotik_cmd = f"""/interface wireguard peers
-add allowed-address={client_ip}/32 interface={iface_name} public-key="{pub}" comment="{client_name}" respond=no
+add allowed-address={client_ip}/32 interface={iface_name} public-key="{pub}" comment="{client_name}" responder=yes
 """
                 qr = qrcode.make(conf)
                 buf = io.BytesIO()
